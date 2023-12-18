@@ -1,0 +1,142 @@
+const AWS = require('aws-sdk');
+
+exports.handler = async (event, context) => {
+    // Log the entire incoming event
+    console.log("Received event: " + JSON.stringify(event, null, 2));
+
+    // Extract commit information from the event payload
+    const body = JSON.parse(event.body || '{}');
+    console.log("Webhook payload body:", body);
+
+    // Extract relevant parameters
+    const repositoryName = body.repository?.name || 'Unknown Repository Name';
+
+    // Extract commit information
+    const commitId = body.head_commit?.id || 'Unknown Commit ID';
+    const pushedBranch = (body.ref || 'Unknown Ref').replace('refs/heads/', '') || 'Unknown Pushed Branch';
+
+    // Check if the event is related to branch creation
+    if (eventIsBranchCreation(body)) {
+        // Create the repository if it doesn't exist
+        await createRepository(repositoryName);
+
+        // Create the branch in CodeCommit
+        await createBranchInCodeCommit(repositoryName, body);
+    } else {
+        // Commit the Lambda function code to CodeCommit
+        const commitIdCreated = await pushLambdaCodeToCodeCommit(repositoryName, pushedBranch, commitId, body);
+
+        // Your webhook processing logic goes here
+
+        // Print the commit ID
+        console.log(`Commit ID: ${commitIdCreated}`);
+    }
+
+    // Return a response, if needed
+    return {
+        statusCode: 200,
+        body: JSON.stringify('Webhook invoked successfully!')
+    };
+};
+
+async function createRepository(repositoryName) {
+    try {
+        // Create a CodeCommit client
+        const codecommit = new AWS.CodeCommit();
+
+        // Create the CodeCommit repository
+        await codecommit.createRepository({ repositoryName }).promise();
+
+        console.log(`Repository '${repositoryName}' created successfully.`);
+    } catch (error) {
+        if (error.code === 'RepositoryNameExistsException') {
+            console.log(`Repository '${repositoryName}' already exists.`);
+        } else {
+            console.log(`Error creating repository: ${error}`);
+        }
+    }
+}
+
+async function pushLambdaCodeToCodeCommit(repositoryName, branchName, commitId, body) {
+    try {
+        // (existing code)
+
+        const response = await codecommit.createCommit({
+            repositoryName,
+            branchName,
+            parentCommitId: latestCommitId,
+            authorName: commitDetails.author?.name || 'Unknown Author',
+            email: commitDetails.author?.email || 'unknown@example.com',
+            commitMessage: commitMessage,
+            putFiles: codeChanges.map(file => {
+                const fileContent = getFileContent(file, body);
+                return {
+                    filePath: file,
+                    fileMode: 'NORMAL',
+                    fileContent: Buffer.from(fileContent, 'utf-8'), // Encode content as buffer
+                };
+            }),
+        }).promise();
+
+        const commitIdCreated = response.commitId;
+        console.log(`Code pushed successfully to branch '${branchName}'. Commit ID: ${commitIdCreated}`);
+
+        return commitIdCreated;
+    } catch (error) {
+        console.log(`Error pushing code to CodeCommit: ${error}`);
+        return null;
+    }
+}
+
+function getFileContent(filePath, body) {
+    try {
+        // (existing code)
+    } catch (error) {
+        console.log(`Error getting file content: ${error}`);
+        return 'Error getting file content';
+    }
+}
+
+async function createBranchInCodeCommit(repositoryName, body) {
+    try {
+        // Create a CodeCommit client
+        const codecommit = new AWS.CodeCommit();
+
+        // Extract branch name from the GitHub payload
+        const branchName = body.ref ? body.ref.split('/').pop() : null;
+
+        if (branchName) {
+            // Check if the branch exists
+            const existingBranches = (await codecommit.listBranches({ repositoryName }).promise()).branches;
+            if (!existingBranches.includes(branchName)) {
+                // Get the commit ID of the default branch (e.g., 'master')
+                const defaultBranchCommitId = (await codecommit.getBranch({
+                    repositoryName,
+                    branchName: 'master' // Change this if your default branch has a different name
+                }).promise()).branch.commitId;
+
+                // If the branch doesn't exist, create it
+                await codecommit.createBranch({
+                    repositoryName,
+                    branchName,
+                    commitId: defaultBranchCommitId // Specify the commit ID of the default branch
+                }).promise();
+                console.log(`Branch '${branchName}' created successfully in CodeCommit.`);
+            } else {
+                console.log(`Branch '${branchName}' already exists in CodeCommit.`);
+            }
+        } else {
+            console.log('Branch name not found in the GitHub payload.');
+        }
+    } catch (error) {
+        console.log(`Error creating branch in CodeCommit: ${error}`);
+        // Log more information about the error for troubleshooting
+        console.error(error);
+    }
+}
+
+function eventIsBranchCreation(body) {
+    // Add logic to determine if the event is a branch creation event
+    // For example, you can check if the 'ref_type' property is 'branch' in the GitHub payload
+    return body.ref_type === 'branch';
+}
